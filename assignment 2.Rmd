@@ -1,0 +1,296 @@
+---
+title: "assignment"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+
+```{r setup, include=FALSE} 
+knitr::opts_chunk$set(warning = FALSE, message = FALSE) 
+```
+
+## R Markdown
+
+
+
+
+```{r}
+library(tidyverse)
+library(tidymodels)
+library(ggplot2)
+library(skimr)
+
+```
+```{r}
+data= read.csv("https://raw.githubusercontent.com/maria-pro/bco6008/main/train_airbnb.csv")
+View(data)
+
+```
+```{r}
+skim(data)
+sum(is.na(data))
+data = na.omit(data)
+sum(is.na(data))
+
+```
+```{r}
+set.seed(123)
+library(caTools)
+spl = sample.split(Y = data$price, SplitRatio = 0.75)
+#subsetting into Train data
+train = data[spl,]
+#subsetting into Test data
+test = data[!spl,]
+dim(train)
+dim(test)
+```
+
+```{r}
+ggplot(data,aes(minimum_nights,price))+geom_point()+geom_smooth()
+ggplot(data,aes(number_of_reviews,price))+geom_point()+geom_smooth()
+ggplot(data,aes(reviews_per_month,price))+geom_point()+geom_smooth()
+```
+
+```{r}
+x <- table(data$room_type)
+
+barplot(x)
+
+y <- table(data$neighbourhood_group)
+barplot(y)
+
+z <- table(data$neighbourhood)
+barplot(z)
+
+ggplot(data = data, aes(x = price)) + geom_histogram()
+
+
+stars_submeans <-data %>%
+  group_by(neighbourhood_group) %>%
+  summarise(mean_price=mean(price, na.rm=TRUE),
+            median_price = median(price))
+stars_submeans
+
+p<-data %>%
+  mutate(neighbourhood_group = fct_reorder(neighbourhood_group, price)) %>%
+  ggplot( aes(x=neighbourhood_group, y=price)) +
+  geom_bar(stat="identity", fill="#f68060", alpha=.6, width=.4) +
+  coord_flip() +
+  xlab("") +
+  theme_bw()
+p
+# From here we can see that the price for Manhattan is huge followed by Brooklyn, Queens.
+
+
+
+q<-data %>%
+  mutate(neighbourhood=fct_lump(neighbourhood, 40), neighbourhood=fct_reorder(neighbourhood, price))%>%
+  ggplot( aes(x=neighbourhood, y=price)) +
+  geom_bar(stat="identity", fill="#f68060", alpha=.6, width=.4) +
+  coord_flip() +
+  xlab("") +
+  theme_bw()
+q
+```
+
+
+```{r}
+# Now the price is maximum for other for top 40 followed by Williamsburg, Bedford-Stuyvesant.
+
+r<-data %>%
+  mutate(room_type=fct_lump(room_type, 40), room_type=fct_reorder(room_type, price))%>%
+  ggplot( aes(x=room_type, y=price)) +
+  geom_bar(stat="identity", fill="#f68060", alpha=.6, width=.4) +
+  coord_flip() +
+  xlab("") +
+  theme_bw()
+r
+# The maximum price is for Entire home/apt followed by Private room then Shared room.
+
+
+ggplot(data,aes(reviews_per_month,price))+geom_point()+geom_smooth(method="lm")
+# The price is varying from 0 - 10000, and the reviews_per_month are varying from 0- 20 mostly.
+
+ggplot(data,aes(calculated_host_listings_count,price))+geom_point()+geom_smooth(method="lm")
+# The calculated_host_listings is not a siginificant predictor of price
+
+
+ggplot(data,aes(availability_365,price))+geom_point()+geom_smooth(method="lm")
+# The price varies with availability_365.
+```
+
+
+
+```{r}
+#Assignment 2 - preprocessing and model building
+library(ggmap)
+bbox <- c(left = -74.24285, bottom = 40.50641, right = -73.71690, top = 40.91306)
+nyc_map <- get_stamenmap(bbox, zoom = 11)
+aggregated_lat_lon <- train %>%
+  group_by(latitude = round(latitude, 2),
+           longitude = round(longitude, 2)) %>%
+  summarize(price = mean(price),
+            n = n()) %>%
+  filter(n >= 5)
+
+```
+
+```{r}
+#recipe_xg<- train %>%
+#target= train$price
+xg_rec <- recipe(price~ room_type+number_of_reviews+latitude+longitude+
+                   neighbourhood_group+reviews_per_month+calculated_host_listings_count +
+                   availability_365+last_review, data=train)
+
+### Assignment 2
+# 1.
+
+set.seed(2021)
+mset <- metric_set(rmse)
+#RMSE describes the sample standard deviation of the differences between the predicted and observed values.
+# As we want to calculate the price which is numerical in nature, therefore we use rmse.
+#metric_set() allows you to combine multiple metric functions together into a new function that calculates all of them at once.
+
+# 2.
+
+#Control aspects of the grid search process
+#save_pred	: A logical for whether the out-of-sample predictions should be saved for each model evaluated.
+#save_workflow	: A logical for whether the workflow should be appended to the output as an attribute.
+grid_control = control_grid(save_pred = TRUE, save_workflow = TRUE, extract=extract_model)
+
+# 3.
+#V-fold cross-validation (also known as k-fold cross-validation) randomly splits the data into V groups of roughly equal size (called "folds"). A resample of the analysis data consisted of V-1 of the folds while the assessment set contains the final fold. In basic V-fold cross-validation (i.e. no repeats), the number of resamples is equal to V.
+
+train_fold5 = vfold_cv(train,5)
+
+# 4.
+# boost_tree() defines a model that creates a series of decision trees forming an ensemble. Each tree depends on the results of previous trees. All trees in the ensemble are combined to produce a final prediction.
+#mtry	: A number for the number (or proportion) of predictors that will be randomly sampled at each split when creating the tree models (specific engines only)
+#trees	: An integer for the number of trees contained in the ensemble.
+#learn_rate	: A number for the rate at which the boosting algorithm adapts from iteration-to-iteration (specific engines only).
+mod = boost_tree(mode="regression",mtry = tune(),trees = tune(), learn_rate = tune())
+
+# 6.
+#A workflow is a container object that aggregates information required to fit and predict from a model.
+
+wf <- workflow() %>%
+  add_recipe(recipe(price~ number_of_reviews+latitude+longitude+
+                      reviews_per_month+calculated_host_listings_count +
+                      availability_365, data=train))%>%
+  # add_formula(win ~ .) %>%
+  add_model(mod)
+wf
+# 7.
+#tune_grid() computes a set of performance metrics (e.g. accuracy or RMSE) for a pre-defined set of tuning parameters that correspond to a model or recipe across one or more resamples of the data.
+
+library(xgboost)
+xg_tune <- tune_grid(wf,
+          metrics = mset,
+          control = grid_control,
+          resamples = train_fold5,
+          grid = crossing(mtry = c(7),
+                          trees = seq(250, 1500, 25),
+                          learn_rate = c(.008, .01)))
+
+# 8. 
+autoplot(xg_tune)
+
+# 9. 
+collect_metrics(xg_tune)
+
+# 10.
+#The finalize_* functions take a list or tibble of tuning parameter values and update objects with those values.
+#x	: A recipe, parsnip model specification, or workflow.
+#parameters	: A list or 1-row tibble of parameter values. Note that the column names of the tibble should be the id fields attached to tune(). For example, in the Examples section below, the model has tune("K"). In this case, the parameter tibble should be "K" and not "neighbors".
+xg_wf <- workflow()%>%
+        add_recipe(recipe(price~ number_of_reviews+latitude+longitude+
+                    reviews_per_month+calculated_host_listings_count +
+                    availability_365, data=train))%>%
+  # add_formula(win ~ .) %>%
+        add_model(mod)
+
+#11. 
+xg_fit <- finalize_workflow(wf,select_best(xg_tune)) %>%
+            fit(train)
+xg_fit
+
+
+xg_fit %>%
+  augment(test) %>%
+  rmse(price, .pred)
+
+importances <- xgboost::xgb.importance(model = xg_fit$fit$fit$fit)
+
+```
+
+
+
+
+
+```{r}
+holdout<-read.csv("https://raw.githubusercontent.com/VictoriaUniversity-AU/bco6008/main/airbnb_test.csv?token=AJTU3ZJEMPZVXIVHY5RYNBTBHVQCG","rt")
+
+xg_fit %>%
+  augment(holdout) %>%
+  mutate(.pred = exp(.pred) - 1) %>%
+  select(id, price = .pred) %>%
+  write_csv("xg_attempt.csv")
+
+importances %>%
+  mutate(Feature = fct_reorder(Feature, Gain)) %>%
+  ggplot(aes(Gain, Feature)) +
+  geom_col()
+
+
+#13.
+lin_mod <- linear_reg(penalty = tune())
+
+#14.
+lin_wf <- 
+  workflow() %>% 
+  add_model(linear_mod) %>% 
+  add_recipe(recipe(price~ number_of_reviews+latitude+longitude+
+                      reviews_per_month+calculated_host_listings_count +
+                      availability_365, data=train))
+
+lin_wf
+
+#15.
+lin_tune <- lin_wf %>%
+  tune_grid(train_fold5,
+            metrics = mset,
+            control = grid_control,
+            grid = crossing(penalty = 10 ^ seq(-7, -1, .1),
+                            threshold = .001))
+            
+autoplot(lin_tune)
+
+lin_tune %>%
+  collect_metrics() %>%
+  arrange(mean)
+
+#16.
+lin_fit <- lin_wf %>%
+  finalize_workflow(select_best(lin_tune)) %>%
+  fit(train)
+lin_fit %>%
+  augment(test) %>%
+  rmse(.pred, price)
+```
+
+
+
+```{r}
+
+
+
+#Conclusion:
+#The linear regression model does not perform much better than the boosting model as we can see that the results are much better. There are alot of variables
+# which needs treatment and many are there which have so many categories so the data must be handled with care to avoid overfitting and data leakage as well. 
+# There are null values as well which needs to be dropped for simplicity while pre processing can be done upon them to treat them better.
+# The linear regression is a very basic model which produces high rmse score.
+```
+
